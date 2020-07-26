@@ -83,7 +83,7 @@ module SPI_Master
 
 
   // Purpose: Generate SPI Clock correct number of times when DV pulse comes
-  always @(posedge i_Clk or negedge i_Rst_L)
+  always @(posedge i_Clk)
   begin
     if (~i_Rst_L)
     begin
@@ -141,7 +141,7 @@ module SPI_Master
 
   // Purpose: Register i_TX_Byte when Data Valid is pulsed.
   // Keeps local storage of byte in case higher level module changes the data
-  always @(posedge i_Clk or negedge i_Rst_L)
+  always @(posedge i_Clk)
   begin
     if (~i_Rst_L)
     begin
@@ -161,7 +161,7 @@ module SPI_Master
 
   // Purpose: Generate MOSI data
   // Works with both CPHA=0 and CPHA=1
-  always @(posedge i_Clk or negedge i_Rst_L)
+  always @(posedge i_Clk)
   begin
     if (~i_Rst_L)
     begin
@@ -191,7 +191,7 @@ module SPI_Master
 
 
   // Purpose: Read in MISO data.
-  always @(posedge i_Clk or negedge i_Rst_L)
+  always @(posedge i_Clk)
   begin
     if (~i_Rst_L)
     begin
@@ -223,7 +223,7 @@ module SPI_Master
   
   
   // Purpose: Add clock delay to signals for alignment.
-  always @(posedge i_Clk or negedge i_Rst_L)
+  always @(posedge i_Clk)
   begin
     if (~i_Rst_L)
     begin

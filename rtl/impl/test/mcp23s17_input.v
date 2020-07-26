@@ -22,8 +22,8 @@ module mcp23s17_input (
   output wire           ready,  // Goes high when the MCP23S17 is configured
 
   // Joystick I/O
-  output wire [  7:0]   Joya,   // Joystick 1 output
-  output wire [  7:0]   Joyb    // Joystick 2 output
+  output reg  [  7:0]   Joya,   // Joystick 1 output
+  output reg  [  7:0]   Joyb    // Joystick 2 output
 );
 
 // Defines
@@ -37,6 +37,8 @@ localparam [7:0]
     REG_ADR_IODIRB  = 8'h01,
     REG_ADR_INTENA  = 8'h04,    // Interrupt enable on bits
     REG_ADR_INTENB  = 8'h05,
+    REG_ADR_GPPUA   = 8'h0C,    // Pull-up registers enable
+    REG_ADR_GPPUB   = 8'h0D,    
     REG_ADR_INTCAPA = 8'h10,    // Latched GPIO registers
     REG_ADR_INTCAPB = 8'h11,
     REG_ADR_GPIOA   = 8'h12,    // GPIO registers
@@ -45,22 +47,42 @@ localparam [7:0]
 
 // MCP23S17 Config values
 localparam [7:0]
-    REG_VAL_IODIRA = 8'hFF,
-    REG_VAL_INTENA = 8'hFF,
-    REG_VAL_IOCON  = 8'b01000010; // {BANK, MIRROR, SEQOP, DISSLW, HAEN, ODR, INTPOL, Unused}
-
-
+    REG_VAL_IODIRA = 8'hFF,       // All IO pins input
+    REG_VAL_IODIRB = 8'hFF,
+    REG_VAL_INTENA = 8'hFF,       // Trigger interrupt any input change
+    REG_VAL_INTENB = 8'hFF,
+    REG_VAL_IOCON  = 8'b01010010; // {BANK, MIRROR, SEQOP, DISSLW, HAEN, ODR, INTPOL, Unused}
 
 // SPI
-reg   [7:0] TX_Byte;
+reg  [7:0]  TX_Byte;
 reg         TX_DV;
 wire        TX_Ready;
 wire        RX_DV; 
-wire  [7:0] RX_Byte;
+wire [7:0]  RX_Byte;
+
+// State machine registers
+reg         st_done     = 1'b0;  // Stage done, move to next stage
+reg         st_dv       = 0;     // Data valid
+reg         st_wait     = 0; // 1 when wait is active
+reg [4:0]   st_seq      = 0;     // Sequence number of read data
+reg [5:0]   st_wait_cnt = 0; // Wait before starting new transaction
+reg [7:0]   st_data     = 0;     // Received data
 
 // Joystick
-reg [7:0] Joya_raw = 8'hff;
-reg [7:0] Joyb_raw = 8'hff;
+reg [7:0]   Joya_raw = 8'hff;
+reg [7:0]   Joyb_raw = 8'hff;
+
+// Meta stability
+reg         inta_;
+reg         inta_s; // Stable inta signal
+reg         miso_;
+reg         miso_s;
+always @(posedge clk) begin
+    inta_ <= inta;
+    inta_s <= inta_;
+    miso_ <= miso; // Meta stability
+    miso_s <= miso_; // Meta stability
+end
 
 // MCP23S17 State machine 
 localparam [4:0]
@@ -71,15 +93,16 @@ localparam [4:0]
     ST_SET_INTENB  = 4,
     ST_SET_IOCON   = 5,
     ST_WAITINT     = 10,
-    ST_READ_GPIO   = 11,
-    ST_DONE        = 12;
+    ST_READ_GPIOA  = 11,
+    ST_READ_GPIOB  = 12,
+    ST_DONE        = 13;
 reg [4:0] mcp_state = ST_IDLE;
 
-// SPI Master
+//// SPI Master ////
 SPI_Master 
 #(
     .SPI_MODE(0),
-    .CLKS_PER_HALF_BIT(2)
+    .CLKS_PER_HALF_BIT(3)
 )
 joy_spi_master
 (
@@ -98,15 +121,27 @@ joy_spi_master
 
     // SPI Interface
     .o_SPI_Clk (sck      ),
-    .i_SPI_MISO(miso     ),
+    .i_SPI_MISO(miso_s    ),
     .o_SPI_MOSI(mosi     )
 );
+
+// Triggers
+reg TX_Ready_ = 0;
+reg tx_ready_t = 0; // Trigger value
+always @(posedge clk) begin
+
+    // Trigger TX_Ready
+    tx_ready_t <= 1'b0;
+    TX_Ready_ <= TX_Ready;
+    if (~TX_Ready_ && TX_Ready) begin
+        tx_ready_t <= 1'b1;
+    end
+end
 
 // MCP23S17 Write Register
 reg [3:0] tx_pos = 0;
 reg [2:0] tx_wait_cnt = 0;
 reg       tx_start = 0;
-reg       TX_Ready_ = 0;
 task write_mcp;
     input [7:0] reg_addr;
     input [7:0] cfg_value;
@@ -118,7 +153,6 @@ task write_mcp;
         st_wait <= 1'b0;
         st_wait_cnt <= 6'b011111;
 
-        TX_Ready_ <= TX_Ready;
 
         // Chip select
         if (~st_wait) begin
@@ -128,7 +162,7 @@ task write_mcp;
                 tx_start <= 1'b1;
             end else begin
                 // CS is asserted start!
-                if((~TX_Ready_ && TX_Ready) || tx_start) begin
+                if(tx_ready_t || tx_start) begin
                     case(tx_pos) 
                         0: begin
                             TX_Byte <= 8'h40; // 0,1,0,0,a2,a1,a0,rw
@@ -163,14 +197,13 @@ task write_mcp;
 endtask
 
 // MCP23S17 Read n registers
-reg [4:0] rx_pos = 0;
+reg [4:0] rx_pos      = 0;
 reg [2:0] rx_wait_cnt = 0;
-reg       rx_wait = 0;
-reg       tx_ready_ = 0;
-reg       tx_ready_p = 0;
-reg       rx_ready = 0;
-reg       rx_ready_p = 0;
-reg       rx_start = 0;
+reg       rx_wait     = 0;
+reg       tx_ready_   = 0;
+reg       rx_ready    = 0;
+reg       rx_ready_p  = 0;
+reg       rx_start    = 0;
 task read_mcp;
     input   [7:0] reg_addr;   // Address to start reading
     input   [4:0] num;        // Number of values to read in sequence
@@ -178,28 +211,20 @@ task read_mcp;
     output  [7:0] rx_data;    // Received data
     output  [4:0] rx_seq;     // Sequence number of the received byte
     output        rx_dv;      // Data received
-    output        rx_done;    // Done receiving
     begin 
 
         // Init
         TX_DV    <= 1'b0;
-        rx_done  <= 1'b0;
         rx_dv    <= 1'b0;
         rx_start <= 1'b0;
         st_wait  <= 1'b0;
-
-        // tx_ready edge trigger
-        tx_ready_ <= TX_Ready;
-        tx_ready_p <= 1'b0;
-        if (~tx_ready_ && TX_Ready) begin
-            tx_ready_p <= 1'b1;
-        end
 
         // rx_ready edge trigger
         rx_ready <= RX_DV;
         rx_ready_p <= 1'b0;
         if(~rx_ready && RX_DV) begin
             rx_ready_p <= 1'b1;
+            rx_pos <= rx_pos + 1;
         end
 
         // Chip select
@@ -210,7 +235,7 @@ task read_mcp;
                 rx_start <= 1'b1;
             end else begin
                 // CS is asserted start!
-                if(tx_ready_p || rx_start == 1) begin
+                if(tx_ready_t || rx_start == 1) begin
                     case(tx_pos)
                         0: begin
                             TX_Byte <= 8'h41;
@@ -230,13 +255,13 @@ task read_mcp;
                 end
 
                 // Byte received, after header return received bytes
-                if(tx_pos >= 2 && rx_ready_p) begin
+                if(rx_pos >= 2 && rx_ready_p) begin
                     rx_dv <= 1'b1;
-                    rx_seq <= tx_pos - 2; // position - header length
+                    rx_seq <= rx_pos - 2; // position - header length
                     rx_data <= RX_Byte;
 
                     // When we are done, say so :-)
-                    if(tx_pos >= (num + 2)) begin
+                    if(rx_pos >= (num + 2)) begin
                         cs <= 1'b1;
                         rx_wait <= 1'b1; 
                         rx_wait_cnt <= 3'b111;
@@ -245,6 +270,7 @@ task read_mcp;
                 end
             end
         end else begin
+            rx_pos <= 0;
             st_wait_cnt <= st_wait_cnt - 1;
             if(st_wait_cnt == 0) begin
                 st_done <= 1'b0; // Ack done
@@ -256,47 +282,41 @@ task read_mcp;
     end
 endtask
 
-
-reg         st_done     = 1'b0;  // Stage done, move to next stage
-reg         st_dv       = 0;     // Data valid
-reg   [7:0] st_data     = 0;     // Received data
-reg   [4:0] st_seq      = 0;     // Sequence number of read data
-reg   [5:0] st_wait_cnt = 0; // Wait before starting new transaction
-reg         st_wait     = 0; // 1 when wait is active
 always @(posedge clk) begin
     case (mcp_state)
         ST_IDLE: begin
             mcp_state <= ST_SET_IODIRA;
             st_done <= 0;
         end
-        ST_SET_IODIRA: begin
-            write_mcp(REG_ADR_IODIRA, 8'hff, ST_SET_IODIRB);
-        end
-        ST_SET_IODIRB: begin
-            write_mcp(REG_ADR_IODIRB, 8'hff, ST_SET_INTENA);
-        end
-        ST_SET_INTENA: begin
-            write_mcp(REG_ADR_INTENA, 8'hff, ST_SET_INTENB);
-        end
-        ST_SET_INTENB: begin
-            write_mcp(REG_ADR_INTENB, 8'hff, ST_SET_IOCON);
-        end
         ST_SET_IOCON: begin
             write_mcp(REG_ADR_IOCON, REG_VAL_IOCON, ST_WAITINT);
         end
-        ST_WAITINT: begin
-            if(inta)
-                mcp_state <= ST_READ_GPIO;
+        ST_SET_IODIRA: begin
+            write_mcp(REG_ADR_IODIRA, REG_VAL_IODIRA, ST_SET_IODIRB);
         end
-        ST_READ_GPIO: begin
-            read_mcp(REG_ADR_INTCAPA, 2, ST_WAITINT, st_data, st_seq, st_dv, st_done);
+        ST_SET_IODIRB: begin
+            write_mcp(REG_ADR_IODIRB, REG_VAL_IODIRB, ST_SET_INTENA);
+        end
+        ST_SET_INTENA: begin
+            write_mcp(REG_ADR_INTENA, REG_VAL_INTENA, ST_SET_INTENB);
+        end
+        ST_SET_INTENB: begin
+            write_mcp(REG_ADR_INTENB, REG_VAL_INTENB, ST_SET_IOCON);
+        end
+        ST_WAITINT: begin
+            if(inta_s)
+                mcp_state <= ST_READ_GPIOA;
+        end
+        ST_READ_GPIOA: begin
+            read_mcp(REG_ADR_GPIOA, 1, ST_READ_GPIOB, st_data, st_seq, st_dv);
             if (st_dv) begin
-                case(st_seq)
-                    0:
-                        Joya_raw <= st_data;
-                    1:
-                        Joyb_raw <= st_data;
-                endcase
+                Joya_raw <= st_data;
+            end
+        end
+        ST_READ_GPIOB: begin
+            read_mcp(REG_ADR_GPIOB, 1, ST_WAITINT, st_data, st_seq, st_dv);
+            if (st_dv) begin
+                Joyb_raw <= st_data;
             end
         end
     endcase
@@ -316,7 +336,9 @@ end
 // Connects the received values to the Joystick pinout of the Amiga
 // 7  6  5       4     3   2     1     0
 // 1, 1, Fire 2, Fire, Up, Down, Left, right
-assign Joya = { 2'b11, Joya_raw[5], Joya_raw[4], Joya_raw[3], Joya_raw[2], Joya_raw[1], Joya_raw[0] };
-assign Joyb = { 2'b11, Joyb_raw[1], Joyb_raw[2], Joyb_raw[3], Joyb_raw[4], Joyb_raw[5], Joyb_raw[6] }; // Inverted because of PCB layout
+always @(posedge clk) begin
+    Joya <= { 2'b11, Joya_raw[5], Joya_raw[4], Joya_raw[3], Joya_raw[2], Joya_raw[1], Joya_raw[0] };
+    Joyb <= { 2'b11, Joyb_raw[1], Joyb_raw[2], Joyb_raw[3], Joyb_raw[4], Joyb_raw[5], Joyb_raw[6] }; // Inverted because of PCB layout
+end
 
 endmodule
