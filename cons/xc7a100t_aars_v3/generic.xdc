@@ -34,7 +34,10 @@ set_property IOSTANDARD LVCMOS33 [get_ports CLOCK_50]
 # Reset button
 
 # Reset input button
-# set_property PACKAGE_PIN H19 [get_ports I_RESET_N]
-# set_property IOSTANDARD LVCMOS33 [get_ports I_RESET_N]
+set_property PACKAGE_PIN H19 [get_ports RESET_N]
+set_property IOSTANDARD LVCMOS33 [get_ports RESET_N]
 
 # Constrain input delay of the reset signal
+
+
+

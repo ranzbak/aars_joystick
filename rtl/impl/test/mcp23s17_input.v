@@ -5,9 +5,6 @@
 /* 2019-2020, ranzbak@gmail.com             */
 /********************************************/
 
-`include "minimig_defines.vh"
-
-
 module mcp23s17_input (
   input  wire           clk,    // 28MHz Clock in
   input  wire           rst,    // Reset ah
@@ -65,6 +62,19 @@ wire  [7:0] RX_Byte;
 reg [7:0] Joya_raw = 8'hff;
 reg [7:0] Joyb_raw = 8'hff;
 
+// MCP23S17 State machine 
+localparam [4:0]
+    ST_IDLE        = 0,
+    ST_SET_IODIRA  = 1,
+    ST_SET_IODIRB  = 2,
+    ST_SET_INTENA  = 3,
+    ST_SET_INTENB  = 4,
+    ST_SET_IOCON   = 5,
+    ST_WAITINT     = 10,
+    ST_READ_GPIO   = 11,
+    ST_DONE        = 12;
+reg [4:0] mcp_state = ST_IDLE;
+
 // SPI Master
 SPI_Master 
 #(
@@ -95,48 +105,58 @@ joy_spi_master
 // MCP23S17 Write Register
 reg [3:0] tx_pos = 0;
 reg [2:0] tx_wait_cnt = 0;
-reg       tx_wait = 0;
+reg       tx_start = 0;
+reg       TX_Ready_ = 0;
 task write_mcp;
     input [7:0] reg_addr;
     input [7:0] cfg_value;
-    output      tx_done;
+    input [4:0] next_stage;
     begin 
         // Init
         TX_DV <= 1'b0;
-        tx_done <= 1'b0; 
+        tx_start <= 1'b0;
+        st_wait <= 1'b0;
+        st_wait_cnt <= 6'b011111;
 
-        if (~tx_wait) begin
-            // Chip select
-            if (cs && ~tx_done) begin
+        TX_Ready_ <= TX_Ready;
+
+        // Chip select
+        if (~st_wait) begin
+            if (cs) begin
                 cs <= 1'b0;
                 tx_pos <= 4'b0;
+                tx_start <= 1'b1;
             end else begin
                 // CS is asserted start!
-                if(TX_Ready || tx_pos == 0) begin
-                    TX_DV <= 1'b1;
+                if((~TX_Ready_ && TX_Ready) || tx_start) begin
                     case(tx_pos) 
-                        0:
-                            TX_Byte <= 8'h40;
-                        1:
+                        0: begin
+                            TX_Byte <= 8'h40; // 0,1,0,0,a2,a1,a0,rw
+                            TX_DV <= 1'b1;
+                        end
+                        1: begin
                             TX_Byte <= reg_addr;
-                        2:
+                            TX_DV <= 1'b1;
+                        end
+                        2: begin
                             TX_Byte <= cfg_value;
+                            TX_DV <= 1'b1;
+                        end
                         default: begin
                             cs <= 1'b1;
-                            tx_wait <=  1'b1;
-                            tx_wait_cnt <= 3'b111;
-                            tx_done <= 1'b1;
+                            st_wait <= 1'b1;
                         end
                     endcase
                     tx_pos <= tx_pos + 1;
                 end
             end
         end else begin
-            // Keep CS high for 8 cycles for the IC to detect it
-            tx_wait_cnt <=  tx_wait_cnt - 1;
-            if (tx_wait_cnt == 0) begin
-                tx_done <= 1'b1;
-                tx_wait <= 1'b0;
+            st_wait_cnt <= st_wait_cnt - 1;
+            if(st_wait_cnt == 0) begin
+                st_done <= 1'b0; // Ack done
+                mcp_state <= next_stage;
+            end else begin
+                st_wait <= 1'b1; // When we are not done stay in wait mode
             end
         end
     end
@@ -148,9 +168,13 @@ reg [2:0] rx_wait_cnt = 0;
 reg       rx_wait = 0;
 reg       tx_ready_ = 0;
 reg       tx_ready_p = 0;
+reg       rx_ready = 0;
+reg       rx_ready_p = 0;
+reg       rx_start = 0;
 task read_mcp;
     input   [7:0] reg_addr;   // Address to start reading
     input   [4:0] num;        // Number of values to read in sequence
+    input   [4:0] next_stage;
     output  [7:0] rx_data;    // Received data
     output  [4:0] rx_seq;     // Sequence number of the received byte
     output        rx_dv;      // Data received
@@ -158,40 +182,55 @@ task read_mcp;
     begin 
 
         // Init
-        TX_DV   <= 1'b0;
-        rx_done <= 1'b0; 
-        rx_dv   <= 1'b0;
+        TX_DV    <= 1'b0;
+        rx_done  <= 1'b0;
+        rx_dv    <= 1'b0;
+        rx_start <= 1'b0;
+        st_wait  <= 1'b0;
 
-        // tx_ready_
+        // tx_ready edge trigger
         tx_ready_ <= TX_Ready;
         tx_ready_p <= 1'b0;
         if (~tx_ready_ && TX_Ready) begin
             tx_ready_p <= 1'b1;
         end
 
+        // rx_ready edge trigger
+        rx_ready <= RX_DV;
+        rx_ready_p <= 1'b0;
+        if(~rx_ready && RX_DV) begin
+            rx_ready_p <= 1'b1;
+        end
+
         // Chip select
-        if (~rx_wait) begin 
-            if (cs && ~rx_done) begin
+        if(~st_wait) begin
+            if (cs) begin
                 cs <= 1'b0;
                 tx_pos <= 4'b0;
+                rx_start <= 1'b1;
             end else begin
                 // CS is asserted start!
-                if(tx_ready_p || (tx_pos == 0)) begin
-                    TX_DV <= 1'b1;
+                if(tx_ready_p || rx_start == 1) begin
                     case(tx_pos)
-                        0:
+                        0: begin
                             TX_Byte <= 8'h41;
-                        1:
+                            TX_DV <= 1'b1;
+                        end
+                        1: begin
                             TX_Byte <= reg_addr;
-                        default:
+                            TX_DV <= 1'b1;
+                        end
+                        default: begin
                             TX_Byte <= 8'h00;
+                            TX_DV <= 1'b1;
+                        end
                     endcase;
 
                     tx_pos <= tx_pos + 1;
                 end
 
                 // Byte received, after header return received bytes
-                if(tx_pos >= 2 && RX_DV) begin
+                if(tx_pos >= 2 && rx_ready_p) begin
                     rx_dv <= 1'b1;
                     rx_seq <= tx_pos - 2; // position - header length
                     rx_data <= RX_Byte;
@@ -201,84 +240,56 @@ task read_mcp;
                         cs <= 1'b1;
                         rx_wait <= 1'b1; 
                         rx_wait_cnt <= 3'b111;
+                        st_wait <= 1'b1;
                     end
                 end
             end
         end else begin
-            // Keep the CS high for 8 clock cycles to give the IC time to
-            // detect the end of transmission.
-            rx_wait_cnt <= rx_wait_cnt - 1;
-            if (rx_wait_cnt == 0) begin
-                rx_wait <= 1'b0;
-                rx_done <= 1'b1;
+            st_wait_cnt <= st_wait_cnt - 1;
+            if(st_wait_cnt == 0) begin
+                st_done <= 1'b0; // Ack done
+                mcp_state <= next_stage;
+            end else begin
+                st_wait <= 1'b1; // When we are not done stay in wait mode
             end
         end
     end
 endtask
 
-// MCP23S17 State machine 
-localparam [4:0]
-    ST_IDLE        = 0,
-    ST_SET_IODIRA  = 1,
-    ST_SET_IODIRB  = 2,
-    ST_SET_INTENA  = 3,
-    ST_SET_INTENB  = 4,
-    ST_SET_IOCON   = 5,
-    ST_WAITINT     = 10,
-    ST_READ_GPIO   = 11,
-    ST_DONE        = 12;
-reg [4:0] mcp_state = ST_IDLE;
 
-reg         st_done = 1'b0;  // Stage done, move to next stage
-reg         st_dv   = 0;     // Data valid      
-reg   [7:0] st_data = 0;     // Received data
-reg   [4:0] st_seq  = 0;     // Sequence number of read data
+reg         st_done     = 1'b0;  // Stage done, move to next stage
+reg         st_dv       = 0;     // Data valid
+reg   [7:0] st_data     = 0;     // Received data
+reg   [4:0] st_seq      = 0;     // Sequence number of read data
+reg   [5:0] st_wait_cnt = 0; // Wait before starting new transaction
+reg         st_wait     = 0; // 1 when wait is active
 always @(posedge clk) begin
     case (mcp_state)
         ST_IDLE: begin
             mcp_state <= ST_SET_IODIRA;
+            st_done <= 0;
         end
         ST_SET_IODIRA: begin
-            write_mcp(REG_ADR_IODIRA, 8'hff, st_done);
-            if(st_done) begin
-                st_done <= 1'b0; // Ack done
-                mcp_state <= ST_SET_IODIRB;
-            end
+            write_mcp(REG_ADR_IODIRA, 8'hff, ST_SET_IODIRB);
         end
         ST_SET_IODIRB: begin
-            write_mcp(REG_ADR_IODIRB, 8'hff, st_done);
-            if(st_done) begin
-                st_done <= 1'b0; // Ack done
-                mcp_state <= ST_SET_INTENA;
-            end
+            write_mcp(REG_ADR_IODIRB, 8'hff, ST_SET_INTENA);
         end
         ST_SET_INTENA: begin
-            write_mcp(REG_ADR_INTENA, 8'hff, st_done);
-            if(st_done) begin
-                st_done <= 1'b0; // Ack done
-                mcp_state <= ST_SET_INTENB;
-            end
+            write_mcp(REG_ADR_INTENA, 8'hff, ST_SET_INTENB);
         end
         ST_SET_INTENB: begin
-            write_mcp(REG_ADR_INTENB, 8'hff, st_done);
-            if(st_done) begin
-                st_done <= 1'b0; // Ack done
-                mcp_state <= ST_SET_IOCON;
-            end
+            write_mcp(REG_ADR_INTENB, 8'hff, ST_SET_IOCON);
         end
         ST_SET_IOCON: begin
-            write_mcp(REG_ADR_IOCON, REG_VAL_IOCON, st_done);
-            if(st_done) begin
-                st_done <= 1'b0; // Ack done
-                mcp_state <= ST_WAITINT;
-            end
+            write_mcp(REG_ADR_IOCON, REG_VAL_IOCON, ST_WAITINT);
         end
         ST_WAITINT: begin
             if(inta)
                 mcp_state <= ST_READ_GPIO;
         end
         ST_READ_GPIO: begin
-            read_mcp(REG_ADR_INTCAPA, 2, st_data, st_seq, st_dv, st_done);
+            read_mcp(REG_ADR_INTCAPA, 2, ST_WAITINT, st_data, st_seq, st_dv, st_done);
             if (st_dv) begin
                 case(st_seq)
                     0:
@@ -286,10 +297,6 @@ always @(posedge clk) begin
                     1:
                         Joyb_raw <= st_data;
                 endcase
-            end
-
-            if(st_done) begin
-                mcp_state <= ST_WAITINT;
             end
         end
     endcase
