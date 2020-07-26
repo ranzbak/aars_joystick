@@ -126,14 +126,22 @@ joy_spi_master
 );
 
 // Triggers
-reg TX_Ready_ = 0;
+reg tx_ready_  = 0;
 reg tx_ready_t = 0; // Trigger value
+reg rx_ready_   = 0;
+reg rx_ready_t = 0;
 always @(posedge clk) begin
+    // rx_ready pos edge trigger
+    rx_ready_ <= RX_DV;
+    rx_ready_t <= 1'b0;
+    if(~rx_ready_ && RX_DV) begin
+        rx_ready_t <= 1'b1;
+    end
 
-    // Trigger TX_Ready
+    // tx_ready_ pos edge trigger
+    tx_ready_ <= TX_Ready;
     tx_ready_t <= 1'b0;
-    TX_Ready_ <= TX_Ready;
-    if (~TX_Ready_ && TX_Ready) begin
+    if (~tx_ready_ && TX_Ready) begin
         tx_ready_t <= 1'b1;
     end
 end
@@ -185,6 +193,9 @@ task write_mcp;
                 end
             end
         end else begin
+            // Pause after exchange, to make the CS signal visible for the IC
+            // Max Clock if the MCP21S17 is 10MHZ, systemclk is 28MHZ, so keep
+            // CS high for multiple clock cycles.
             st_wait_cnt <= st_wait_cnt - 1;
             if(st_wait_cnt == 0) begin
                 st_done <= 1'b0; // Ack done
@@ -200,8 +211,6 @@ endtask
 reg [4:0] rx_pos      = 0;
 reg [2:0] rx_wait_cnt = 0;
 reg       rx_wait     = 0;
-reg       tx_ready_   = 0;
-reg       rx_ready    = 0;
 reg       rx_ready_p  = 0;
 reg       rx_start    = 0;
 task read_mcp;
@@ -218,11 +227,11 @@ task read_mcp;
         rx_dv    <= 1'b0;
         rx_start <= 1'b0;
         st_wait  <= 1'b0;
+        st_wait_cnt <= 6'b011111;
 
-        // rx_ready edge trigger
-        rx_ready <= RX_DV;
+        // Update data after rx_pos
         rx_ready_p <= 1'b0;
-        if(~rx_ready && RX_DV) begin
+        if(rx_ready_t) begin
             rx_ready_p <= 1'b1;
             rx_pos <= rx_pos + 1;
         end
@@ -270,6 +279,9 @@ task read_mcp;
                 end
             end
         end else begin
+            // Pause after exchange, to make the CS signal visible for the IC
+            // Max Clock if the MCP21S17 is 10MHZ, systemclk is 28MHZ, so keep
+            // CS high for multiple clock cycles.
             rx_pos <= 0;
             st_wait_cnt <= st_wait_cnt - 1;
             if(st_wait_cnt == 0) begin
@@ -337,8 +349,8 @@ end
 // 7  6  5       4     3   2     1     0
 // 1, 1, Fire 2, Fire, Up, Down, Left, right
 always @(posedge clk) begin
-    Joya <= { 2'b11, Joya_raw[5], Joya_raw[4], Joya_raw[3], Joya_raw[2], Joya_raw[1], Joya_raw[0] };
-    Joyb <= { 2'b11, Joyb_raw[1], Joyb_raw[2], Joyb_raw[3], Joyb_raw[4], Joyb_raw[5], Joyb_raw[6] }; // Inverted because of PCB layout
+    Joya <= { 2'b11, Joya_raw[5], Joya_raw[4], Joya_raw[3], Joya_raw[2], Joya_raw[1], Joya_raw[0] }; // Joystick A mapping
+    Joyb <= { 2'b11, Joyb_raw[1], Joyb_raw[2], Joyb_raw[3], Joyb_raw[4], Joyb_raw[5], Joyb_raw[6] }; // Joystick B mapping
 end
 
 endmodule

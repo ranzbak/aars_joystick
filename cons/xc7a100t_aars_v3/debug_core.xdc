@@ -32,6 +32,39 @@ connect_debug_port u_ila_0/probe16 [get_nets [list joy_test/joy_spi_master/st_do
 
 connect_debug_port u_ila_0/probe11 [get_nets [list {joy_test/tx_pos[3]_i_2_n_0}]]
 
+connect_debug_port u_ila_0/probe10 [get_nets [list {joy_test/tx_pos[2]_i_1_n_0}]]
+
+connect_debug_port u_ila_0/probe12 [get_nets [list {joy_test/tx_pos[1]_i_1_n_0}]]
+
+connect_debug_port u_ila_0/probe14 [get_nets [list {joy_test/tx_pos_reg_n_0_[3]}]]
+
+
+create_clock -period 20.000 -name CLOCK_50 -waveform {0.000 10.000} [get_ports CLOCK_50]
+
+create_clock -period 35.714 -name VIRTUAL_clk28_loc -waveform {0.000 17.857}
+connect_debug_port u_ila_0/probe5 [get_nets [list JS_INTA_IBUF]]
+
+set_input_delay -clock [get_clocks VIRTUAL_clk28_loc] -min -add_delay -1.100 [get_ports JS_MISO]
+set_input_delay -clock [get_clocks VIRTUAL_clk28_loc] -max -add_delay 1.100 [get_ports JS_MISO]
+set_input_delay -clock [get_clocks VIRTUAL_clk28_loc] -min -add_delay -1.100 [get_ports RESET_N]
+set_input_delay -clock [get_clocks VIRTUAL_clk28_loc] -max -add_delay 1.100 [get_ports RESET_N]
+set_output_delay -clock [get_clocks VIRTUAL_clk28_loc] -min -add_delay 2.000 [get_ports {BOARD_LEDS[*]}]
+set_output_delay -clock [get_clocks VIRTUAL_clk28_loc] -max -add_delay 5.900 [get_ports {BOARD_LEDS[*]}]
+set_output_delay -clock [get_clocks VIRTUAL_clk28_loc] -min -add_delay 2.000 [get_ports JS_CS]
+set_output_delay -clock [get_clocks VIRTUAL_clk28_loc] -max -add_delay 5.900 [get_ports JS_CS]
+set_output_delay -clock [get_clocks VIRTUAL_clk28_loc] -min -add_delay 2.000 [get_ports JS_MOSI]
+set_output_delay -clock [get_clocks VIRTUAL_clk28_loc] -max -add_delay 5.900 [get_ports JS_MOSI]
+set_output_delay -clock [get_clocks VIRTUAL_clk28_loc] -min -add_delay 2.000 [get_ports JS_SCK]
+set_output_delay -clock [get_clocks VIRTUAL_clk28_loc] -max -add_delay 5.900 [get_ports JS_SCK]
+connect_debug_port u_ila_0/probe12 [get_nets [list {joy_test/tx_pos_reg_n_0_[0]}]]
+
+connect_debug_port u_ila_0/probe0 [get_nets [list {joy_test/Joya[0]} {joy_test/Joya[1]} {joy_test/Joya[2]} {joy_test/Joya[3]} {joy_test/Joya[4]} {joy_test/Joya[5]}]]
+
+set_input_delay -clock [get_clocks VIRTUAL_clk28_loc] -min -add_delay 2.000 [get_ports JS_INTA]
+set_input_delay -clock [get_clocks VIRTUAL_clk28_loc] -max -add_delay 4.400 [get_ports JS_INTA]
+
+connect_debug_port u_ila_0/probe10 [get_nets [list joy_test/rx_ready_t]]
+
 create_debug_core u_ila_0 ila
 set_property ALL_PROBE_SAME_MU true [get_debug_cores u_ila_0]
 set_property ALL_PROBE_SAME_MU_CNT 1 [get_debug_cores u_ila_0]
@@ -69,39 +102,27 @@ connect_debug_port u_ila_0/probe5 [get_nets [list JS_SCK_OBUF]]
 create_debug_port u_ila_0 probe
 set_property PROBE_TYPE DATA_AND_TRIGGER [get_debug_ports u_ila_0/probe6]
 set_property port_width 1 [get_debug_ports u_ila_0/probe6]
-connect_debug_port u_ila_0/probe6 [get_nets [list locked]]
+connect_debug_port u_ila_0/probe6 [get_nets [list reset]]
 create_debug_port u_ila_0 probe
 set_property PROBE_TYPE DATA_AND_TRIGGER [get_debug_ports u_ila_0/probe7]
 set_property port_width 1 [get_debug_ports u_ila_0/probe7]
-connect_debug_port u_ila_0/probe7 [get_nets [list reset]]
+connect_debug_port u_ila_0/probe7 [get_nets [list RESET_N_IBUF]]
 create_debug_port u_ila_0 probe
 set_property PROBE_TYPE DATA_AND_TRIGGER [get_debug_ports u_ila_0/probe8]
 set_property port_width 1 [get_debug_ports u_ila_0/probe8]
-connect_debug_port u_ila_0/probe8 [get_nets [list RESET_N_IBUF]]
+connect_debug_port u_ila_0/probe8 [get_nets [list {joy_test/tx_pos_reg_n_0_[0]}]]
 create_debug_port u_ila_0 probe
 set_property PROBE_TYPE DATA_AND_TRIGGER [get_debug_ports u_ila_0/probe9]
 set_property port_width 1 [get_debug_ports u_ila_0/probe9]
-connect_debug_port u_ila_0/probe9 [get_nets [list {joy_test/tx_pos[1]_i_1_n_0}]]
+connect_debug_port u_ila_0/probe9 [get_nets [list {joy_test/tx_pos_reg_n_0_[2]}]]
 create_debug_port u_ila_0 probe
 set_property PROBE_TYPE DATA_AND_TRIGGER [get_debug_ports u_ila_0/probe10]
 set_property port_width 1 [get_debug_ports u_ila_0/probe10]
-connect_debug_port u_ila_0/probe10 [get_nets [list {joy_test/tx_pos[2]_i_1_n_0}]]
+connect_debug_port u_ila_0/probe10 [get_nets [list joy_test/joy_spi_master/TX_Ready]]
 create_debug_port u_ila_0 probe
 set_property PROBE_TYPE DATA_AND_TRIGGER [get_debug_ports u_ila_0/probe11]
 set_property port_width 1 [get_debug_ports u_ila_0/probe11]
-connect_debug_port u_ila_0/probe11 [get_nets [list {joy_test/tx_pos_reg_n_0_[0]}]]
-create_debug_port u_ila_0 probe
-set_property PROBE_TYPE DATA_AND_TRIGGER [get_debug_ports u_ila_0/probe12]
-set_property port_width 1 [get_debug_ports u_ila_0/probe12]
-connect_debug_port u_ila_0/probe12 [get_nets [list {joy_test/tx_pos_reg_n_0_[2]}]]
-create_debug_port u_ila_0 probe
-set_property PROBE_TYPE DATA_AND_TRIGGER [get_debug_ports u_ila_0/probe13]
-set_property port_width 1 [get_debug_ports u_ila_0/probe13]
-connect_debug_port u_ila_0/probe13 [get_nets [list {joy_test/tx_pos_reg_n_0_[3]}]]
-create_debug_port u_ila_0 probe
-set_property PROBE_TYPE DATA_AND_TRIGGER [get_debug_ports u_ila_0/probe14]
-set_property port_width 1 [get_debug_ports u_ila_0/probe14]
-connect_debug_port u_ila_0/probe14 [get_nets [list joy_test/joy_spi_master/TX_Ready]]
+connect_debug_port u_ila_0/probe11 [get_nets [list joy_test/tx_ready_t]]
 set_property C_CLK_INPUT_FREQ_HZ 300000000 [get_debug_cores dbg_hub]
 set_property C_ENABLE_CLK_DIVIDER false [get_debug_cores dbg_hub]
 set_property C_USER_SCAN_CHAIN 1 [get_debug_cores dbg_hub]
